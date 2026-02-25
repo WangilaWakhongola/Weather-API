@@ -26,7 +26,7 @@ Installation
 Clone the repository
 
 bash
-git clone https://github.com/yourusername/weather-api.git
+git clone https://github.com/WangilaWakhongola/Weather-API.git
 cd weather-api
 Set up environment variables
 
@@ -42,11 +42,11 @@ bash
 docker-compose up --build
 Access the API
 
-API Base URL: http://localhost:8000
+API Base URL: https://api.weather.gov
 
-Interactive Docs: http://localhost:8000/docs
+Interactive Docs: https://api.weather.gov/openapi.json
 
-Alternative Docs: http://localhost:8000/redoc
+Alternative Docs: https://weather-gov.github.io/api/
 
 Docker Configuration
 Dockerfile
@@ -264,3 +264,4 @@ Free OpenWeather tier allows 60 calls/minute - caching helps stay within limits
 
 License
 MIT
+
