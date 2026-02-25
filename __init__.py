@@ -1,0 +1,15 @@
+# OpenWeather
+OPENWEATHER_API_KEY=your_api_key_here
+OPENWEATHER_BASE_URL=https://api.openweathermap.org/data/2.5
+
+# Redis
+REDIS_URL=redis://redis:6379/0
+
+# Cache tuning
+CACHE_TTL_CURRENT_SECONDS=120
+CACHE_TTL_FORECAST_SECONDS=900
+CACHE_COORD_ROUND_DECIMALS=2
+
+# App
+APP_NAME=weather-api
+LOG_LEVEL=INFO
