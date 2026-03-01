@@ -1,3 +1,6 @@
+from contextlib import asynccontextmanager
+
+import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
@@ -10,6 +13,25 @@ app = FastAPI(title=settings.app_name)
 
 cache = RedisCache(settings.redis_url)
 ow = OpenWeatherClient(settings.openweather_base_url, settings.openweather_api_key)
+
+
+@asynccontextmanager
+async def _cache_lock(lock_key: str, detail: str):
+    """Acquire a Redis lock, handle upstream errors, and release the lock on exit."""
+    have_lock = cache.acquire_lock(lock_key, ttl_ms=10_000)
+    try:
+        if not have_lock:
+            raise HTTPException(status_code=503, detail=detail)
+        yield
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    finally:
+        if have_lock:
+            cache.release_lock(lock_key)
 
 
 @app.get("/health")
@@ -39,13 +61,7 @@ async def current_weather(
             cache=CacheInfo(hit=True, age_seconds=cached.age_seconds, stale=cached.stale),
         )
 
-    have_lock = cache.acquire_lock(lock_key, ttl_ms=10_000)
-    try:
-        if not have_lock:
-            # Another request is refreshing; return 503 or wait-and-retry.
-            # Keeping it simple: return 503.
-            raise HTTPException(status_code=503, detail="Weather refresh in progress, try again")
-
+    async with _cache_lock(lock_key, "Weather refresh in progress, try again"):
         data = await ow.get_current(lat=lat, lon=lon, units=units)
         cache.set_json(key, data, ttl_seconds=settings.cache_ttl_current_seconds)
 
@@ -57,13 +73,6 @@ async def current_weather(
             provider={"name": "openweather", "data_timestamp": data.get("dt")},
             cache=CacheInfo(hit=False, age_seconds=None, stale=False),
         )
-    except httpx.HTTPStatusError as e:  # type: ignore[name-defined]
-        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    finally:
-        if have_lock:
-            cache.release_lock(lock_key)
 
 
 @app.get("/v1/weather/forecast", response_model=ForecastResponse)
@@ -88,11 +97,7 @@ async def forecast(
             cache=CacheInfo(hit=True, age_seconds=cached.age_seconds, stale=cached.stale),
         )
 
-    have_lock = cache.acquire_lock(lock_key, ttl_ms=10_000)
-    try:
-        if not have_lock:
-            raise HTTPException(status_code=503, detail="Forecast refresh in progress, try again")
-
+    async with _cache_lock(lock_key, "Forecast refresh in progress, try again"):
         data = await ow.get_forecast(lat=lat, lon=lon, units=units)
         cache.set_json(key, data, ttl_seconds=settings.cache_ttl_forecast_seconds)
 
@@ -104,13 +109,6 @@ async def forecast(
             provider={"name": "openweather", "data_timestamp": None},
             cache=CacheInfo(hit=False, age_seconds=None, stale=False),
         )
-    except httpx.HTTPStatusError as e:  # type: ignore[name-defined]
-        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    finally:
-        if have_lock:
-            cache.release_lock(lock_key)
 
 
 # Optional: nicer error for root
