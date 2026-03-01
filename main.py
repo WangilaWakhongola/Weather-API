@@ -1,3 +1,6 @@
+from contextlib import asynccontextmanager
+
+import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
@@ -6,10 +9,18 @@ from app.models import CacheInfo, CurrentWeatherResponse, ForecastResponse, Loca
 from app.services.cache import RedisCache, rounded_coords
 from app.services.openweather import OpenWeatherClient
 
-app = FastAPI(title=settings.app_name)
-
 cache = RedisCache(settings.redis_url)
 ow = OpenWeatherClient(settings.openweather_base_url, settings.openweather_api_key)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await ow.aclose()
+    await cache.aclose()
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 
 @app.get("/health")
@@ -27,7 +38,7 @@ async def current_weather(
     key = f"current:{units}:{rlat}:{rlon}"
     lock_key = f"lock:{key}"
 
-    cached = cache.get_json(key)
+    cached = await cache.get_json(key)
     if cached.hit and cached.value is not None:
         payload = cached.value
         return CurrentWeatherResponse(
@@ -39,7 +50,7 @@ async def current_weather(
             cache=CacheInfo(hit=True, age_seconds=cached.age_seconds, stale=cached.stale),
         )
 
-    have_lock = cache.acquire_lock(lock_key, ttl_ms=10_000)
+    have_lock = await cache.acquire_lock(lock_key, ttl_ms=10_000)
     try:
         if not have_lock:
             # Another request is refreshing; return 503 or wait-and-retry.
@@ -47,7 +58,7 @@ async def current_weather(
             raise HTTPException(status_code=503, detail="Weather refresh in progress, try again")
 
         data = await ow.get_current(lat=lat, lon=lon, units=units)
-        cache.set_json(key, data, ttl_seconds=settings.cache_ttl_current_seconds)
+        await cache.set_json(key, data, ttl_seconds=settings.cache_ttl_current_seconds)
 
         return CurrentWeatherResponse(
             location=Location(lat=lat, lon=lon, name=data.get("name"), country=data.get("sys", {}).get("country")),
@@ -57,13 +68,13 @@ async def current_weather(
             provider={"name": "openweather", "data_timestamp": data.get("dt")},
             cache=CacheInfo(hit=False, age_seconds=None, stale=False),
         )
-    except httpx.HTTPStatusError as e:  # type: ignore[name-defined]
+    except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
     finally:
         if have_lock:
-            cache.release_lock(lock_key)
+            await cache.release_lock(lock_key)
 
 
 @app.get("/v1/weather/forecast", response_model=ForecastResponse)
@@ -76,7 +87,7 @@ async def forecast(
     key = f"forecast:{units}:{rlat}:{rlon}"
     lock_key = f"lock:{key}"
 
-    cached = cache.get_json(key)
+    cached = await cache.get_json(key)
     if cached.hit and cached.value is not None:
         payload = cached.value
         city = payload.get("city", {}) if isinstance(payload, dict) else {}
@@ -88,13 +99,13 @@ async def forecast(
             cache=CacheInfo(hit=True, age_seconds=cached.age_seconds, stale=cached.stale),
         )
 
-    have_lock = cache.acquire_lock(lock_key, ttl_ms=10_000)
+    have_lock = await cache.acquire_lock(lock_key, ttl_ms=10_000)
     try:
         if not have_lock:
             raise HTTPException(status_code=503, detail="Forecast refresh in progress, try again")
 
         data = await ow.get_forecast(lat=lat, lon=lon, units=units)
-        cache.set_json(key, data, ttl_seconds=settings.cache_ttl_forecast_seconds)
+        await cache.set_json(key, data, ttl_seconds=settings.cache_ttl_forecast_seconds)
 
         city = data.get("city", {}) if isinstance(data, dict) else {}
         return ForecastResponse(
@@ -104,13 +115,13 @@ async def forecast(
             provider={"name": "openweather", "data_timestamp": None},
             cache=CacheInfo(hit=False, age_seconds=None, stale=False),
         )
-    except httpx.HTTPStatusError as e:  # type: ignore[name-defined]
+    except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
     finally:
         if have_lock:
-            cache.release_lock(lock_key)
+            await cache.release_lock(lock_key)
 
 
 # Optional: nicer error for root
