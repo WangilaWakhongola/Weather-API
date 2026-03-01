@@ -1,9 +1,9 @@
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple
+from typing import Optional, Tuple
 
-import redis
+import redis.asyncio as aioredis
 
 
 @dataclass
@@ -21,10 +21,10 @@ class RedisCache:
     """
 
     def __init__(self, redis_url: str):
-        self.client = redis.from_url(redis_url, decode_responses=True)
+        self.client = aioredis.from_url(redis_url, decode_responses=True)
 
-    def get_json(self, key: str, allow_stale: bool = True) -> CacheResult:
-        raw = self.client.get(key)
+    async def get_json(self, key: str, allow_stale: bool = True) -> CacheResult:
+        raw = await self.client.get(key)
         if not raw:
             return CacheResult(value=None, hit=False, age_seconds=None, stale=False)
 
@@ -41,19 +41,22 @@ class RedisCache:
             # corrupted cache entry
             return CacheResult(value=None, hit=False, age_seconds=None, stale=False)
 
-    def set_json(self, key: str, payload: dict, ttl_seconds: int) -> None:
+    async def set_json(self, key: str, payload: dict, ttl_seconds: int) -> None:
         obj = {"stored_at": int(time.time()), "payload": payload}
-        self.client.setex(key, ttl_seconds, json.dumps(obj))
+        await self.client.setex(key, ttl_seconds, json.dumps(obj))
 
-    def acquire_lock(self, lock_key: str, ttl_ms: int = 10_000) -> bool:
+    async def acquire_lock(self, lock_key: str, ttl_ms: int = 10_000) -> bool:
         # SET key value NX PX ttl
-        return bool(self.client.set(lock_key, "1", nx=True, px=ttl_ms))
+        return bool(await self.client.set(lock_key, "1", nx=True, px=ttl_ms))
 
-    def release_lock(self, lock_key: str) -> None:
+    async def release_lock(self, lock_key: str) -> None:
         try:
-            self.client.delete(lock_key)
+            await self.client.delete(lock_key)
         except Exception:
             pass
+
+    async def aclose(self) -> None:
+        await self.client.aclose()
 
 
 def rounded_coords(lat: float, lon: float, decimals: int) -> Tuple[float, float]:
