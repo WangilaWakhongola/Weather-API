@@ -1,10 +1,12 @@
+import httpx
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from app.config import settings
-from app.models import CacheInfo, CurrentWeatherResponse, ForecastResponse, Location
-from app.services.cache import RedisCache, rounded_coords
-from app.services.openweather import OpenWeatherClient
+from config import settings
+from models import CacheInfo, CurrentWeatherResponse, ForecastResponse, Location
+from services__cache import RedisCache, rounded_coords
+from openweather import OpenWeatherClient
 
 app = FastAPI(title=settings.app_name)
 
