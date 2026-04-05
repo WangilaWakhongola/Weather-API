@@ -1,267 +1,208 @@
-Weather API
-A robust weather API service that fetches real-time weather data from OpenWeather and caches responses in Redis for optimal performance. Built with FastAPI and Docker.
+# Weather API
 
-Features
-Real-time Weather Data: Fetch current weather conditions using latitude/longitude coordinates
+A FastAPI-based Weather API that fetches live data from [OpenWeatherMap](https://openweathermap.org/), caches responses in Redis for faster performance and lower API usage, and exposes endpoints for current weather and 5-day forecasts — addressable by **city name** or **latitude/longitude**.
 
-5-Day Forecast: Get 3-hour interval weather forecasts for the next 5 days
+---
 
-Smart Caching: Redis-based caching with configurable TTL to reduce API calls
+## Features
 
-Cache Stampede Protection: Implements a simple locking mechanism to prevent cache stampede
+- **City-name lookup** — `/weather?city=Nairobi` and `/forecast?city=Nairobi`
+- **Coordinate-based lookup** — `/v1/weather/current?lat=&lon=` and `/v1/weather/forecast?lat=&lon=`
+- **Input validation** — missing/invalid parameters return a clear `400`/`422` response
+- **Consistent JSON errors** — upstream failures return `502`; lock contention returns `503`
+- **Smart caching** — Redis-backed with configurable TTL and cache-stampede protection
+- **Docker support** — full `docker-compose` setup with Redis included
+- **Auto documentation** — Swagger UI at `/docs`, ReDoc at `/redoc`
+- **Health endpoint** — `/health` for uptime monitoring
 
-Docker Support: Full containerization with docker-compose for easy deployment
+---
 
-Auto Documentation: Interactive API docs with Swagger UI and ReDoc
+## Quick Start
 
-Health Check: Built-in health endpoint for monitoring
+### Prerequisites
 
-Quick Start
-Prerequisites
-Docker and Docker Compose
+- Docker & Docker Compose **or** Python 3.11+
+- [OpenWeatherMap API key](https://openweathermap.org/appid) (free tier works)
 
-OpenWeather API key (Get one here)
+### 1 — Clone & configure
 
-Installation
-Clone the repository
-
-bash
+```bash
 git clone https://github.com/WangilaWakhongola/Weather-API.git
-cd weather-api
-Set up environment variables
+cd Weather-API
+cp env.example .env
+# Edit .env and set OPENWEATHER_API_KEY=your_key_here
+```
 
-bash
-cp .env.example .env
-Edit .env and add your OpenWeather API key:
+### 2 — Run with Docker Compose
 
-env
-OPENWEATHER_API_KEY=your_api_key_here
-Run with Docker Compose
-
-bash
+```bash
 docker-compose up --build
-Access the API
+```
 
-API Base URL: https://api.weather.gov
+The API is then available at **http://localhost:8000**.
 
-Interactive Docs: https://api.weather.gov/openapi.json
+### 3 — Run locally (without Docker)
 
-Alternative Docs: https://weather-gov.github.io/api/
-
-Docker Configuration
-Dockerfile
-dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-docker-compose.yml
-yaml
-version: '3.8'
-
-services:
-  api:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_DB=0
-      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
-      - CACHE_TTL_SECONDS=300
-      - COORDINATE_ROUNDING=2
-    volumes:
-      - ./app:/app/app
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - weather-network
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    networks:
-      - weather-network
-
-networks:
-  weather-network:
-    driver: bridge
-API Endpoints
-Health Check
-bash
-GET /health
-Response
-
-json
-{
-  "status": "healthy",
-  "timestamp": "2024-01-01T12:00:00Z",
-  "services": {
-    "redis": "connected",
-    "openweather": "available"
-  }
-}
-Current Weather
-bash
-GET /v1/weather/current?lat={latitude}&lon={longitude}&units={units}
-Parameters
-
-Parameter	Type	Required	Description	Default
-lat	float	Yes	Latitude (-90 to 90)	-
-lon	float	Yes	Longitude (-180 to 180)	-
-units	string	No	Units: metric, imperial, or standard	metric
-Example Request
-
-bash
-curl "http://localhost:8000/v1/weather/current?lat=-1.286389&lon=36.817223&units=metric"
-Example Response
-
-json
-{
-  "coord": { "lon": 36.8172, "lat": -1.2864 },
-  "weather": [
-    {
-      "id": 801,
-      "main": "Clouds",
-      "description": "few clouds",
-      "icon": "02d"
-    }
-  ],
-  "main": {
-    "temp": 24.5,
-    "feels_like": 24.8,
-    "temp_min": 23.9,
-    "temp_max": 25.1,
-    "pressure": 1015,
-    "humidity": 65
-  },
-  "name": "Nairobi",
-  "cod": 200
-}
-5-Day Forecast
-bash
-GET /v1/weather/forecast?lat={latitude}&lon={longitude}&units={units}
-Parameters
-
-Parameter	Type	Required	Description	Default
-lat	float	Yes	Latitude (-90 to 90)	-
-lon	float	Yes	Longitude (-180 to 180)	-
-units	string	No	Units: metric, imperial, or standard	metric
-Example Request
-
-bash
-curl "http://localhost:8000/v1/weather/forecast?lat=-1.286389&lon=36.817223&units=metric"
-Configuration
-Environment Variables
-Variable	Description	Default
-OPENWEATHER_API_KEY	Your OpenWeather API key	Required
-REDIS_HOST	Redis server hostname	localhost
-REDIS_PORT	Redis server port	6379
-REDIS_DB	Redis database number	0
-CACHE_TTL_SECONDS	Cache expiration time	300 (5 minutes)
-COORDINATE_ROUNDING	Decimal places for coord rounding	2 (~1.1km precision)
-Coordinate Rounding
-The API rounds coordinates to increase cache hit rates. With the default setting of 2 decimal places:
-
-Precision: ~1.1 kilometers at the equator
-
-Cache key: weather:current:-1.29,36.82:metric
-
-Benefit: Multiple nearby requests share the same cached response
-
-Architecture
-text
-┌─────────────┐     ┌──────────┐     ┌─────────────┐
-│   Client    │────▶│  FastAPI │────▶│    Redis    │
-└─────────────┘     └──────────┘     └─────────────┘
-                           │                  │
-                           ▼                  │
-                    ┌─────────────┐           │
-                    │ OpenWeather │◀──────────┘
-                    │     API     │   (Cache Miss)
-                    └─────────────┘
-Caching Strategy
-Check Cache: API checks Redis for cached response
-
-Cache Hit: Returns cached data immediately
-
-Cache Miss:
-
-Acquires a distributed lock
-
-Fetches from OpenWeather API
-
-Stores in Redis with TTL
-
-Releases the lock
-
-Cache Stampede Prevention: Concurrent requests for the same data wait for the first request to complete
-
-Local Development (Without Docker)
-Create virtual environment
-
-bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-Install dependencies
-
-bash
+```bash
+python -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-Set environment variables
-
-bash
-export $(cat .env | xargs)  # On Windows: set OPENWEATHER_API_KEY=your_key
-Run Redis (make sure Redis is installed and running)
-
-bash
-redis-server
-Start the API server
-
-bash
+# Requires a running Redis instance:
+redis-server &
 uvicorn app.main:app --reload --port 8000
-Dependencies
-Create a requirements.txt file:
+```
 
-txt
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-redis==5.0.1
-httpx==0.25.1
-pydantic==2.4.2
-pydantic-settings==2.1.0
-python-dotenv==1.0.0
-tenacity==8.2.3
-Environment File
-Create a .env.example file:
+---
 
-env
-OPENWEATHER_API_KEY=your_api_key_here
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_DB=0
-CACHE_TTL_SECONDS=300
-COORDINATE_ROUNDING=2
-Notes
-OpenWeather "forecast" endpoint provides 5-day forecast with 3-hour intervals
+## API Endpoints
 
-Coordinate rounding is used to increase cache hit rate (configurable via env)
+### Health check
 
-Free OpenWeather tier allows 60 calls/minute - caching helps stay within limits
+```
+GET /health
+```
 
-License
+```json
+{"status": "ok", "service": "weather-api"}
+```
+
+---
+
+### Current weather by city name
+
+```
+GET /weather?city={city}&units={metric|imperial}
+```
+
+| Parameter | Type   | Required | Default  | Description                         |
+|-----------|--------|----------|----------|-------------------------------------|
+| `city`    | string | ✅       | —        | City name, e.g. `London`            |
+| `units`   | string | ❌       | `metric` | `metric` or `imperial`              |
+
+**Example:**
+
+```bash
+curl "http://localhost:8000/weather?city=Nairobi&units=metric"
+```
+
+```json
+{
+  "location": {"lat": -1.2864, "lon": 36.8172, "name": "Nairobi", "country": "KE"},
+  "units": "metric",
+  "current": {
+    "weather": [{"main": "Clouds", "description": "few clouds"}],
+    "main": {"temp": 24.5, "feels_like": 24.8, "humidity": 65},
+    "name": "Nairobi",
+    "cod": 200
+  },
+  "provider": {"name": "openweather"},
+  "cache": {"hit": false, "age_seconds": null, "stale": false}
+}
+```
+
+---
+
+### 5-day forecast by city name
+
+```
+GET /forecast?city={city}&units={metric|imperial}
+```
+
+```bash
+curl "http://localhost:8000/forecast?city=Nairobi"
+```
+
+---
+
+### Current weather by coordinates
+
+```
+GET /v1/weather/current?lat={lat}&lon={lon}&units={metric|imperial}
+```
+
+| Parameter | Type  | Required | Range        |
+|-----------|-------|----------|--------------|
+| `lat`     | float | ✅       | −90 … 90     |
+| `lon`     | float | ✅       | −180 … 180   |
+| `units`   | str   | ❌       | metric/imperial |
+
+```bash
+curl "http://localhost:8000/v1/weather/current?lat=-1.286389&lon=36.817223"
+```
+
+---
+
+### 5-day forecast by coordinates
+
+```
+GET /v1/weather/forecast?lat={lat}&lon={lon}&units={metric|imperial}
+```
+
+```bash
+curl "http://localhost:8000/v1/weather/forecast?lat=-1.286389&lon=36.817223"
+```
+
+---
+
+## Error Responses
+
+| Scenario                    | HTTP Status | Example `detail`                    |
+|-----------------------------|-------------|--------------------------------------|
+| Missing required parameter  | `422`       | FastAPI validation detail            |
+| Invalid `units` value       | `422`       | FastAPI validation detail            |
+| City not found              | `400`       | `"City not found: 'XxUnknown'"`      |
+| OpenWeather API error       | `502`       | Upstream error text                  |
+| Cache lock contention       | `503`       | `"Weather refresh in progress, …"`   |
+
+---
+
+## Configuration
+
+Copy `env.example` to `.env` and fill in values:
+
+| Variable                      | Description                             | Default                                      |
+|-------------------------------|-----------------------------------------|----------------------------------------------|
+| `OPENWEATHER_API_KEY`         | OpenWeatherMap API key (**required**)   | —                                            |
+| `OPENWEATHER_BASE_URL`        | OWM data API base URL                   | `https://api.openweathermap.org/data/2.5`    |
+| `OPENWEATHER_GEO_URL`         | OWM Geocoding API base URL              | `https://api.openweathermap.org/geo/1.0`     |
+| `REDIS_URL`                   | Redis connection URL                    | `redis://localhost:6379/0`                   |
+| `CACHE_TTL_CURRENT_SECONDS`   | TTL for current-weather cache           | `120`                                        |
+| `CACHE_TTL_FORECAST_SECONDS`  | TTL for forecast cache                  | `900`                                        |
+| `CACHE_COORD_ROUND_DECIMALS`  | Decimal places for coordinate rounding  | `2` (~1.1 km precision)                      |
+
+---
+
+## Running Tests
+
+```bash
+pip install -r requirements.txt
+pytest tests/ -v
+```
+
+All tests use mocks — no live Redis or API key required.
+
+---
+
+## Architecture
+
+```
+Client
+  │
+  ▼
+FastAPI app  ──► Redis cache (hit?) ──► return cached
+  │                                       │
+  │                  (miss)               │
+  ▼                                       │
+OpenWeather                               │
+Geocoding API  (city → lat/lon)           │
+  │                                       │
+  ▼                                       │
+OpenWeather                               │
+Data API  ─────────────────────────────► store & return
+```
+
+---
+
+## License
+
 MIT
-
