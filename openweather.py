@@ -1,6 +1,6 @@
 from typing import Any, Dict
 
-import http
+import httpx
 
 
 class OpenWeatherClient:
